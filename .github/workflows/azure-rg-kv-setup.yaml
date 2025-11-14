@@ -1,0 +1,107 @@
+name: azure-rg-kv-setup
+run-name: Setup Azure RG & Key Vault for ${{ inputs.environment }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: e2e
+        type: environment
+
+      createResourceGroup:
+        description: "Create/Update Resource Group?"
+        required: true
+        default: false
+        type: boolean
+
+      resourceGroupName:
+        description: "Resource Group Name"
+        required: true
+        default: ""
+
+      location:
+        description: "Region for Resource Group"
+        required: true
+        default: ""
+
+      createKeyVault:
+        description: "Create Key Vault?"
+        required: true
+        default: false
+        type: boolean
+
+      kvName:
+        description: "Key Vault Name"
+        required: true
+        default: ""
+
+      kvLocation:
+        description: "Key Vault Region"
+        required: true
+        default: ""
+
+      kvResourceGroupName:
+        description: "Key Vault Resource Group"
+        required: true
+        default: ""
+
+env:
+  AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+
+jobs:
+  azure-setup:
+    environment: ${{ inputs.environment }}
+    runs-on: [self-hosted, e2e-connect]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ env.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ env.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ env.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ env.AZURE_TENANT_ID }}"
+            }
+
+      - name: Create or Update Resource Group
+        if: ${{ github.event.inputs.createResourceGroup == 'true' }}
+        run: |
+          RG="${{ github.event.inputs.resourceGroupName }}"
+          LOC="${{ github.event.inputs.location }}"
+
+          echo "Creating/Updating Resource Group: $RG"
+          az group create --name "$RG" --location "$LOC"
+
+      - name: Create Key Vault
+        if: ${{ github.event.inputs.createKeyVault == 'true' }}
+        run: |
+          RG="${{ github.event.inputs.kvResourceGroupName }}"
+          KV="${{ github.event.inputs.kvName }}"
+          LOC="${{ github.event.inputs.kvLocation }}"
+
+          echo "Checking Resource Group: $RG"
+          if [ "$(az group exists --name $RG)" = "false" ]; then
+            echo " Resource Group $RG does not exist. Aborting."
+            exit 1
+          fi
+
+          if az keyvault show --name "$KV" --resource-group "$RG" >/dev/null 2>&1; then
+            echo " Key Vault $KV already exists. Skipping."
+          else
+            echo "Creating Key Vault $KV in $RG"
+            az keyvault create \
+              --name "$KV" \
+              --resource-group "$RG" \
+              --location "$LOC" \
+              --sku standard
+          fi
